@@ -61,6 +61,7 @@ jobs:
           const { execSync } = require('child_process');
 
           async function main() {
+            // FIX: method đúng là createTwaProject, không phải generateAndroidProject
             const { TwaManifest, TwaGenerator } = require('@bubblewrap/core');
 
             const PWA_URL   = process.env.PWA_URL;
@@ -124,12 +125,13 @@ jobs:
 
             const projectDir = path.join(WORKSPACE, 'twa-project');
 
-            // Generate Android project — không prompt
+            // FIX: đúng method name là createTwaProject
             const generator = new TwaGenerator();
-            await generator.generateAndroidProject(projectDir, twaManifest);
-            console.log('✅ Android project generated at', projectDir);
+            const log = { debug: console.log, info: console.log, warn: console.warn, error: console.error };
+            await generator.createTwaProject(projectDir, twaManifest, log);
+            console.log('✅ Android project created at', projectDir);
 
-            // Build APK bằng Gradle trực tiếp
+            // Build APK bằng Gradle trực tiếp — không có prompt
             execSync('./gradlew assembleRelease', {
               cwd: projectDir,
               stdio: 'inherit',
@@ -157,7 +159,7 @@ jobs:
               .readdirSync(`${process.env.ANDROID_SDK_ROOT}/build-tools`)
               .sort()
               .at(-1);
-            const zipalign  = `${process.env.ANDROID_SDK_ROOT}/build-tools/${buildToolsVer}/zipalign`;
+            const zipalign   = `${process.env.ANDROID_SDK_ROOT}/build-tools/${buildToolsVer}/zipalign`;
             const alignedApk = path.join(projectDir, 'app-release-aligned.apk');
             execSync(`${zipalign} -v 4 ${signedApk} ${alignedApk}`, { stdio: 'inherit' });
             console.log('✅ Aligned APK:', alignedApk);
