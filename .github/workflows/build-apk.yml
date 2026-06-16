@@ -25,14 +25,6 @@ jobs:
           
           PWA_URL="${{ github.event.client_payload.url }}"
           echo "PWA_URL=$PWA_URL" >> $GITHUB_ENV
-          echo "PKG_ID=com.libraryvn.twa.app" >> $GITHUB_ENV
-          echo "PWA_HOST=libvn.pages.dev" >> $GITHUB_ENV
-          
-          APP_NAME="${{ github.event.client_payload.name }}"
-          if [ -z "$APP_NAME" ] || [ "$APP_NAME" = "undefined" ]; then APP_NAME="Library VN"; fi
-          echo "APP_NAME=$APP_NAME" >> $GITHUB_ENV
-          
-          echo "APP_ICON=https://upload.wikimedia.org/wikipedia/commons/d/d5/Progressive_Web_Apps_Logo.png" >> $GITHUB_ENV
           
           DISPLAY_MODE="${{ github.event.client_payload.displayMode }}"
           if [ -z "$DISPLAY_MODE" ] || [ "$DISPLAY_MODE" = "undefined" ]; then DISPLAY_MODE="standalone"; fi
@@ -72,37 +64,16 @@ jobs:
             -validity 10000 \
             -storepass "123456" \
             -keypass "123456" \
-            -dname "CN=LibraryVN, OU=App, O=Library, L=HN, S=HN, C=VN"
+            -dname "CN=TWAApp, OU=App, O=TWA, L=HN, S=HN, C=VN"
 
       - name: Khởi tạo dự án TWA
         run: |
           mkdir twa-project && cd twa-project
           cp ../android.keystore ./android.keystore
-
-          cat <<'EOF' > twa-manifest.json
-          {
-            "packageId": "com.libraryvn.twa.app",
-            "host": "libvn.pages.dev",
-            "startUrl": "/",
-            "name": "Library VN",
-            "launcherName": "Library VN",
-            "display": "standalone",
-            "themeColor": "#2196F3",
-            "navigationColor": "#000000",
-            "backgroundColor": "#FFFFFF",
-            "enableNotifications": false,
-            "iconUrl": "https://upload.wikimedia.org/wikipedia/commons/d/d5/Progressive_Web_Apps_Logo.png",
-            "maskableIconUrl": "https://upload.wikimedia.org/wikipedia/commons/d/d5/Progressive_Web_Apps_Logo.png",
-            "splashFadeoutMillis": 300,
-            "signingKey": {
-              "path": "./android.keystore",
-              "alias": "android"
-            },
-            "alphaDependencies": false
-          }
-          EOF
-
-          bubblewrap init --manifest="https://libvn.pages.dev/manifest.json"
+          bubblewrap init --manifest="${{ env.PWA_URL }}/manifest.json"
+        env:
+          BUBBLEWRAP_KEYSTORE_PASSWORD: "123456"
+          BUBBLEWRAP_KEY_PASSWORD: "123456"
 
       - name: Biên dịch APK
         run: cd twa-project && bubblewrap build
