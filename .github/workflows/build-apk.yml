@@ -13,6 +13,7 @@ jobs:
         run: |
           echo "BUILD_ID=${{ github.event.client_payload.buildId }}" >> $GITHUB_ENV
           echo "PWA_URL=${{ github.event.client_payload.url }}" >> $GITHUB_ENV
+          echo "DISPLAY_MODE=${{ github.event.client_payload.displayMode }}" >> $GITHUB_ENV
 
       - name: Setup Java
         uses: actions/setup-java@v3
@@ -31,13 +32,23 @@ jobs:
       - name: Init TWA project
         run: |
           mkdir twa-project && cd twa-project
-          bubblewrap init --manifest="${{ env.PWA_URL }}/manifest.json" --directory=.
+          bubblewrap init \
+            --manifest="${{ env.PWA_URL }}/manifest.json" \
+            --directory=.
         env:
           BUBBLEWRAP_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           BUBBLEWRAP_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
 
+      - name: Patch display mode
+        if: env.DISPLAY_MODE != 'standalone'
+        run: |
+          cd twa-project
+          sed -i "s/\"display\": \"standalone\"/\"display\": \"${{ env.DISPLAY_MODE }}\"/" twa-manifest.json
+
       - name: Build APK
-        run: cd twa-project && bubblewrap build
+        run: |
+          cd twa-project
+          bubblewrap build
         env:
           BUBBLEWRAP_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           BUBBLEWRAP_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
@@ -51,12 +62,23 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Notify Cloudflare Worker
+      - name: Notify success
         run: |
-          curl -X POST ${{ secrets.WORKER_WEBHOOK_URL }} \
+          curl -X POST ${{ secrets.WORKER_WEBHOOK_URL }}/webhook \
             -H "Content-Type: application/json" \
             -d '{
               "buildId": "${{ env.BUILD_ID }}",
               "status": "success",
               "downloadUrl": "https://github.com/${{ github.repository }}/releases/download/build-${{ env.BUILD_ID }}/app-release-signed.apk"
+            }'
+
+      - name: Notify failure
+        if: failure()
+        run: |
+          curl -X POST ${{ secrets.WORKER_WEBHOOK_URL }}/webhook \
+            -H "Content-Type: application/json" \
+            -d '{
+              "buildId": "${{ env.BUILD_ID }}",
+              "status": "error",
+              "message": "Build thất bại, kiểm tra lại manifest.json"
             }'
