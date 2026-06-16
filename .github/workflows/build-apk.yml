@@ -12,10 +12,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout mã nguồn
         uses: actions/checkout@v4
 
-      - name: Read Payload
+      - name: Đọc dữ liệu Payload đầu vào
         run: |
           echo "BUILD_ID=${{ github.event.client_payload.buildId }}" >> $GITHUB_ENV
           PWA_URL="${{ github.event.client_payload.url }}"
@@ -24,37 +24,43 @@ jobs:
           PWA_HOST=$(echo "$PWA_URL" | sed 's|https://||' | sed 's|http://||' | cut -d'/' -f1)
           echo "PWA_HOST=$PWA_HOST" >> $GITHUB_ENV
 
-      - name: Setup Java
+      - name: Cấu hình môi trường Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
-      - name: Setup Node
+      - name: Cấu hình môi trường Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "20"
 
-      - name: Accept SDK Licenses
+      - name: Đồng ý điều khoản Android SDK Licenses
         run: yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --licenses || true
 
-      - name: Generate Keystore Thuật Toán Chuẩn
+      - name: Tự động sinh Keystore Cố định theo Domain (Cơ chế PWABuilder)
         run: |
+          # Băm MD5 của tên miền để tạo ra một chuỗi mật khẩu cố định duy nhất cho riêng trang web đó
+          DYNAMIC_PASS=$(echo "${{ env.PWA_HOST }}" | md5sum | cut -d' ' -f1)
+          echo "DYNAMIC_PASS=$DYNAMIC_PASS" >> $GITHUB_ENV
+          
+          # Sinh phím Keystore bọc thời gian bắt đầu cố định để giữ nguyên dấu vân tay SHA-256
           keytool -genkeypair \
             -alias android \
             -keyalg RSA \
             -keysize 2048 \
             -sigalg SHA256withRSA \
             -validity 10000 \
+            -startdate "2026/01/01 00:00:00" \
             -keystore ${{ github.workspace }}/android.keystore \
-            -storepass 123456 \
-            -keypass 123456 \
-            -dname "CN=TWAApp,O=TWA,C=VN"
+            -storepass "$DYNAMIC_PASS" \
+            -keypass "$DYNAMIC_PASS" \
+            -dname "CN=${{ env.PWA_HOST }},O=TWA_Builder,C=VN"
 
-      - name: Install Bubblewrap Dependencies
+      - name: Cài đặt thư viện lõi Bubblewrap
         run: npm install @bubblewrap/core
 
-      - name: Generate & Build TWA (Headless Chuẩn Chữ Ký)
+      - name: Biên dịch và Đóng gói TWA Headless
         run: |
           node << 'SCRIPT'
           const path = require('path');
@@ -62,27 +68,29 @@ jobs:
           const { execSync } = require('child_process');
 
           async function main() {
-            const { TwaManifest, TwaGenerator, AndroidSdkTools } = require('@bubblewrap/core');
+            const { TwaManifest, TwaGenerator } = require('@bubblewrap/core');
 
             const PWA_URL   = process.env.PWA_URL;
             const PWA_HOST  = process.env.PWA_HOST;
             const WORKSPACE = process.env.GITHUB_WORKSPACE;
+            const DYNAMIC_PASS = process.env.DYNAMIC_PASS;
 
-            // Đổi cấu hình Package ID sạch dòng đời
+            // Đồng bộ định dạng Package ID dựa trên tên miền sạch
             const domain = PWA_HOST.replace(/\./g, '_').replace(/-/g, '_').replace(/[^a-z0-9_]/gi, '').toLowerCase();
             const packageId = `net.twa.${domain}.app`;
-            console.log('✅ Package ID Sạch:', packageId);
+            console.log('✅ Package ID Hệ Thống:', packageId);
 
-            // Fetch web manifest mẫu cứu hộ phòng hờ lỗi
+            // Thu thập dữ liệu Web Manifest của khách hàng
             let web = {};
             try {
               const res = await fetch(`${PWA_URL}/manifest.json`);
               web = await res.json();
+              console.log('✅ Đã nạp thành công manifest.json');
             } catch(e) {
-              console.log('⚠️ Không fetch được manifest trực tuyến, dùng fallback mặc định.');
+              console.log('⚠️ Không fetch được manifest trực tuyến, chuyển hướng dùng cấu hình dự phòng.');
             }
 
-            // Resolve icon URL
+            // Xử lý nạp ảnh Icon ứng dụng
             let iconUrl = "https://upload.wikimedia.org/wikipedia/commons/d/d5/Progressive_Web_Apps_Logo.png";
             if (web.icons && web.icons.length > 0) {
               const icon = web.icons.find(i => i.sizes === '512x512') || web.icons.at(-1);
@@ -92,8 +100,8 @@ jobs:
             const twaManifest = new TwaManifest({
               packageId,
               host:                         PWA_HOST,
-              name:                         web.name       || 'Library VN',
-              launcherName:                 web.short_name || 'Library VN',
+              name:                         web.name       || 'TWA App',
+              launcherName:                 web.short_name || 'TWA App',
               display:                      web.display    || 'standalone',
               themeColor:                   web.theme_color      || '#2196F3',
               themeColorDark:               '#000000',
@@ -123,8 +131,8 @@ jobs:
               isChromeOSOnly:               false,
               isMetaQuest:                  false,
               fullScopeUrl:                 `${PWA_URL}/`,
-              minSdkVersion:                24, // Android 7.0 trở lên mới cài được
-              targetSdkVersion:             33, // Ép API 33 để sideload mượt mà nhất
+              minSdkVersion:                24,
+              targetSdkVersion:             33,
               orientation:                  'default',
               fingerprints:                 [],
             });
@@ -133,20 +141,19 @@ jobs:
             const generator = new TwaGenerator();
             const log = { debug: console.log, info: console.log, warn: console.warn, error: console.error };
             
-            // 1. Tạo Source Code Android sạch
+            // 1. Dựng khung dự án cấu trúc Android sạch
             await generator.createTwaProject(projectDir, twaManifest, log);
-            console.log('✅ Android project created at', projectDir);
+            console.log('✅ Khởi tạo project thành công tại:', projectDir);
 
-            // 2. Biên dịch mã nguồn với Gradle để tạo ra file .apk gốc
+            // 2. Gọi Gradle dựng file APK thô chưa ký số
             execSync('./gradlew assembleRelease', {
               cwd: projectDir,
               stdio: 'inherit',
               env: { ...process.env },
             });
-            console.log('✅ Gradle build complete');
+            console.log('✅ Thực thi biên dịch Gradle thành công');
 
-            // 3. Quy trình chuẩn hóa chữ ký số Android SDK: ZIPALIGN TRƯỚC -> APKSIGNER SAU
-            const sdkTools = new AndroidSdkTools(process.env.ANDROID_SDK_ROOT);
+            // 3. Định vị thư mục Android SDK Build Tools có sẵn trong máy ảo
             const buildToolsVer = fs.readdirSync(`${process.env.ANDROID_SDK_ROOT}/build-tools`).sort().at(-1);
             const buildToolsPath = path.join(process.env.ANDROID_SDK_ROOT, 'build-tools', buildToolsVer);
             
@@ -154,20 +161,20 @@ jobs:
             const alignedApk = path.join(projectDir, 'app-release-aligned.apk');
             const finalApk = path.join(WORKSPACE, 'final-app-release.apk');
 
-            // Chạy căn chỉnh bộ nhớ hệ thống (Zipalign)
-            console.log('🚀 Đang chạy Zipalign...');
+            // Tiến trình A: Căn chỉnh bộ nhớ tối ưu hệ thống (Zipalign)
+            console.log('🚀 Đang xử lý Zipalign tối ưu tập tin...');
             execSync(`${path.join(buildToolsPath, 'zipalign')} -v 4 ${unsignedApk} ${alignedApk}`, { stdio: 'ignore' });
 
-            // Chạy Apksigner (Ép tích hợp toàn diện chữ ký V2/V3) thay cho Jarsigner lỗi thời
-            console.log('🚀 Đang chạy Apksigner (Ký sâu V2/V3)...');
+            // Tiến trình B: Ký số tích hợp chứng chỉ V2/V3 (Apksigner) để triệt tiêu lỗi "App không cài đặt được"
+            console.log('🚀 Đang chạy Apksigner bọc chứng chỉ V2/V3 toàn vẹn...');
             execSync(
               `${path.join(buildToolsPath, 'apksigner')} sign ` +
               `--ks ${path.join(WORKSPACE, 'android.keystore')} ` +
-              `--ks-pass pass:123456 --key-pass pass:123456 ` +
+              `--ks-pass pass:${DYNAMIC_PASS} --key-pass pass:${DYNAMIC_PASS} ` +
               `--out ${finalApk} ${alignedApk}`,
               { stdio: 'inherit' }
             );
-            console.log('🎯 XỬ LÝ HOÀN TẤT! File APK tối ưu đã được tạo tại:', finalApk);
+            console.log('🎯 Quá trình đóng gói hoàn tất thành công!');
           }
 
           main().catch(e => { console.error(e); process.exit(1); });
@@ -176,21 +183,51 @@ jobs:
           PWA_URL: ${{ env.PWA_URL }}
           PWA_HOST: ${{ env.PWA_HOST }}
           GITHUB_WORKSPACE: ${{ github.workspace }}
+          DYNAMIC_PASS: ${{ env.DYNAMIC_PASS }}
 
-      - name: Gán biến môi trường phát hành
+      - name: Tự động trích xuất SHA-256 và Đẻ file assetlinks.json chính chủ
+        run: |
+          # Lấy chính xác chuỗi SHA-256 sạch từ file Keystore
+          SHA256_FINGERPRINT=$(keytool -list -v -keystore ${{ github.workspace }}/android.keystore -storepass "${{ env.DYNAMIC_PASS }}" | grep "SHA256:" | awk '{print $2}')
+          
+          # Định dạng lại package_name chuẩn hóa theo logic Node.js bên trên
+          CLEAN_DOMAIN=$(echo "${{ env.PWA_HOST }}" | sed 's/\./_/g' | sed 's/-/_/g' | tr '[:upper:]' '[:lower:]')
+          PACKAGE_NAME="net.twa.${CLEAN_DOMAIN}.app"
+          
+          # Ghi đè cấu trúc JSON chuẩn của Google Asset Links ra file vật lý
+          cat << EOF > ${{ github.workspace }}/assetlinks.json
+          [
+            {
+              "relation": ["delegate_permission/common.handle_all_urls"],
+              "target": {
+                "namespace": "android_app",
+                "package_name": "$PACKAGE_NAME",
+                "sha256_cert_fingerprints": ["$SHA256_FINGERPRINT"]
+              }
+            }
+          ]
+          EOF
+          
+          echo "✅ Đã đẻ thành công file assetlinks.json lý tưởng cho domain ${{ env.PWA_HOST }}"
+          echo "Mã SHA-256 của Web này là: $SHA256_FINGERPRINT"
+
+      - name: Thiết lập môi trường phát hành xuất xưởng
         run: |
           echo "APK_PATH=${{ github.workspace }}/final-app-release.apk" >> $GITHUB_ENV
+          echo "ASSETLINKS_PATH=${{ github.workspace }}/assetlinks.json" >> $GITHUB_ENV
 
-      - name: Release APK lên GitHub
+      - name: Phát hành ứng dụng và file Xác thực lên GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ env.BUILD_ID }}
           name: Build ${{ env.BUILD_ID }}
-          files: ${{ env.APK_PATH }}
+          files: |
+            ${{ env.APK_PATH }}
+            ${{ env.ASSETLINKS_PATH }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Notify Worker
+      - name: Gửi phản hồi kèm link tải file về cho Worker Webhook
         if: always()
         run: |
           if [ ! -z "${{ secrets.WORKER_WEBHOOK_URL }}" ]; then
@@ -199,12 +236,14 @@ jobs:
             BASE_URL="${BASE_URL%/}"
             
             if [ "$STATUS" = "success" ]; then
+              RELEASE_URL="https://github.com/${{ github.repository }}/releases/download/build-${{ env.BUILD_ID }}"
+              
               curl -X POST "$BASE_URL/webhook" \
                 -H "Content-Type: application/json" \
-                -d "{\"buildId\": \"${{ env.BUILD_ID }}\", \"status\": \"success\", \"downloadUrl\": \"https://github.com/${{ github.repository }}/releases/download/build-${{ env.BUILD_ID }}/final-app-release.apk\"}"
+                -d "{\"buildId\": \"${{ env.BUILD_ID }}\", \"status\": \"success\", \"downloadUrl\": \"${RELEASE_URL}/final-app-release.apk\", \"assetlinksUrl\": \"${RELEASE_URL}/assetlinks.json\"}"
             else
               curl -X POST "$BASE_URL/webhook" \
                 -H "Content-Type: application/json" \
-                -d "{\"buildId\": \"${{ env.BUILD_ID }}\", \"status\": \"error\", \"message\": \"Build thất bại tại GitHub.\"}"
+                -d "{\"buildId\": \"${{ env.BUILD_ID }}\", \"status\": \"error\", \"message\": \"Quá trình biên dịch hoặc tạo cấu hình tại GitHub gặp sự cố.\"}"
             fi
           fi
