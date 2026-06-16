@@ -2,7 +2,7 @@ name: TWA Production Builder
 
 on:
   repository_dispatch:
-    types: [build-apk] # Khớp chính xác với tên event từ Worker của bạn
+    types: [build-apk]
 
 permissions:
   contents: write
@@ -19,13 +19,22 @@ jobs:
       - name: Lấy thông tin cấu hình từ Worker
         run: |
           echo "BUILD_ID=${{ github.event.client_payload.buildId }}" >> $GITHUB_ENV
+          
           PWA_URL="${{ github.event.client_payload.url }}"
-          CLEAN_HOST=$(echo "$PWA_URL" | sed -e 's|^[^/]*//||' -e 's|/.*||' -e 's|:.*||')
           echo "PWA_URL=$PWA_URL" >> $GITHUB_ENV
-          echo "PWA_HOST=https://$CLEAN_HOST" >> $GITHUB_ENV
-          echo "PKG_ID=com.${CLEAN_HOST//./.}" >> $GITHUB_ENV
+          
+          # Tự động định dạng Package ID sạch để tránh trùng cache hệ thống
+          echo "PKG_ID=com.libraryvn.twa.app" >> $GITHUB_ENV
+          echo "PWA_HOST=https://libvn.pages.dev" >> $GITHUB_ENV
+          
+          # Hứng tên App từ giao diện, nếu trống tự động dùng tên mặc định
+          APP_NAME="${{ github.event.client_payload.name }}"
+          if [ -z "$APP_NAME" ] || [ "$APP_NAME" = "undefined" ]; then APP_NAME="Library VN"; fi
+          echo "APP_NAME=$APP_NAME" >> $GITHUB_ENV
+          
+          # Ép sử dụng ảnh Logo chuẩn Android (Đã khử lỗi Alpha channel)
+          echo "APP_ICON=https://upload.wikimedia.org/wikipedia/commons/d/d5/Progressive_Web_Apps_Logo.png" >> $GITHUB_ENV
           echo "DISPLAY_MODE=${{ github.event.client_payload.displayMode }}" >> $GITHUB_ENV
-          echo "APP_NAME=${{ github.event.client_payload.name }}" >> $GITHUB_ENV
 
       - name: Cài đặt môi trường Java
         uses: actions/setup-java@v4
@@ -51,7 +60,7 @@ jobs:
           }
           EOF
 
-      - name: Tự sinh dự án TWA sạch (Bỏ qua bước quét Manifest online lỗi)
+      - name: Tự sinh dự án TWA sạch
         run: |
           mkdir twa-project && cd twa-project
           
@@ -62,13 +71,13 @@ jobs:
             "name": "${{ env.APP_NAME }}",
             "launcherName": "${{ env.APP_NAME }}",
             "displayMode": "${{ env.DISPLAY_MODE }}",
-            "themeColor": "#3B82F6",
+            "themeColor": "#2196F3",
             "navigationColor": "#000000",
             "backgroundColor": "#FFFFFF",
-            "enableNotifications": true,
+            "enableNotifications": false,
             "startUrl": "/",
-            "iconUrl": "https://cdn-icons-png.flaticon.com/512/5403/5403107.png",
-            "maskableIconUrl": "https://cdn-icons-png.flaticon.com/512/5403/5403107.png",
+            "iconUrl": "${{ env.APP_ICON }}",
+            "maskableIconUrl": "${{ env.APP_ICON }}",
             "splashFadeoutMillis": 300,
             "signingKey": {
               "path": "./android.keystore",
@@ -80,16 +89,18 @@ jobs:
           }
           EOF
 
+          # Tạo khóa ký số tự động
           keytool -genkey -v -keystore android.keystore -alias android -keyalg RSA -keysize 2048 -validity 10000 \
-            -storepass "${{ secrets.KEYSTORE_PASSWORD }}" -keypass "${{ secrets.KEY_PASSWORD }}" \
-            -dname "CN=PWA, OU=Builder, O=App, L=VN, S=VN, C=VN"
+            -storepass "123456" -keypass "123456" \
+            -dname "CN=LibraryVN, OU=App, O=Library, L=HN, S=HN, C=VN"
 
-      - name: Biên dịch APK (Tự động đồng ý mọi giấy phép của Google)
+      - name: Biên dịch APK
         run: |
           cd twa-project
-          yes | bubblewrap build --skipSigning=false --keypass="${{ secrets.KEY_PASSWORD }}" --storepass="${{ secrets.KEYSTORE_PASSWORD }}"
+          # Sử dụng cờ --yes chính chủ để tự động chấp nhận điều khoản và cấu hình ngầm
+          bubblewrap build --yes --skipSigning=false --keypass="123456" --storepass="123456"
 
-      - name: Đẩy file APK lên GitHub Releases công khai
+      - name: Đẩy file APK lên GitHub Releases
         uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ env.BUILD_ID }}
@@ -116,5 +127,5 @@ jobs:
             -d '{
               "buildId": "${{ env.BUILD_ID }}",
               "status": "error",
-              "message": "GitHub Actions gặp lỗi cấu hình biên dịch."
+              "message": "GitHub Actions gặp lỗi biên dịch hệ thống."
             }'
