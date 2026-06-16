@@ -1,68 +1,104 @@
-name: Build APK from PWA
+name: TWA Production Builder
 
 on:
   repository_dispatch:
-    types: [build-apk]
+    types: [build-apk] # Khớp chính xác với tên event từ Worker của bạn
+
+permissions:
+  contents: write
+  actions: write
 
 jobs:
-  build:
+  build-apk:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Get build info
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Lấy thông tin cấu hình từ Worker
         run: |
           echo "BUILD_ID=${{ github.event.client_payload.buildId }}" >> $GITHUB_ENV
-          echo "PWA_URL=${{ github.event.client_payload.url }}" >> $GITHUB_ENV
+          PWA_URL="${{ github.event.client_payload.url }}"
+          CLEAN_HOST=$(echo "$PWA_URL" | sed -e 's|^[^/]*//||' -e 's|/.*||' -e 's|:.*||')
+          echo "PWA_URL=$PWA_URL" >> $GITHUB_ENV
+          echo "PWA_HOST=https://$CLEAN_HOST" >> $GITHUB_ENV
+          echo "PKG_ID=com.${CLEAN_HOST//./.}" >> $GITHUB_ENV
           echo "DISPLAY_MODE=${{ github.event.client_payload.displayMode }}" >> $GITHUB_ENV
+          echo "APP_NAME=${{ github.event.client_payload.name }}" >> $GITHUB_ENV
 
-      - name: Setup Java
-        uses: actions/setup-java@v3
+      - name: Cài đặt môi trường Java
+        uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v3
+      - name: Cài đặt môi trường Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: '18'
 
-      - name: Install Bubblewrap
+      - name: Cài đặt Bubblewrap CLI chính chủ Google
         run: npm i -g @bubblewrap/cli
 
-      - name: Init TWA project
+      - name: Cấu hình đường dẫn Android SDK ngầm
+        run: |
+          mkdir -p ~/.bubblewrap
+          cat <<EOF > ~/.bubblewrap/config.json
+          {
+            "jdkPath": "${JAVA_HOME}",
+            "androidSdkPath": "/usr/local/lib/android/sdk"
+          }
+          EOF
+
+      - name: Tự sinh dự án TWA sạch (Bỏ qua bước quét Manifest online lỗi)
         run: |
           mkdir twa-project && cd twa-project
-          bubblewrap init \
-            --manifest="${{ env.PWA_URL }}/manifest.json" \
-            --directory=.
-        env:
-          BUBBLEWRAP_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          BUBBLEWRAP_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          
+          cat <<EOF > twa-manifest.json
+          {
+            "packageId": "${{ env.PKG_ID }}",
+            "host": "${{ env.PWA_HOST }}",
+            "name": "${{ env.APP_NAME }}",
+            "launcherName": "${{ env.APP_NAME }}",
+            "displayMode": "${{ env.DISPLAY_MODE }}",
+            "themeColor": "#3B82F6",
+            "navigationColor": "#000000",
+            "backgroundColor": "#FFFFFF",
+            "enableNotifications": true,
+            "startUrl": "/",
+            "iconUrl": "https://cdn-icons-png.flaticon.com/512/5403/5403107.png",
+            "maskableIconUrl": "https://cdn-icons-png.flaticon.com/512/5403/5403107.png",
+            "splashFadeoutMillis": 300,
+            "signingKey": {
+              "path": "./android.keystore",
+              "alias": "android"
+            },
+            "alphaDependencies": false,
+            "features": {},
+            "alphaDependencies": false
+          }
+          EOF
 
-      - name: Patch display mode
-        if: env.DISPLAY_MODE != 'standalone'
+          keytool -genkey -v -keystore android.keystore -alias android -keyalg RSA -keysize 2048 -validity 10000 \
+            -storepass "${{ secrets.KEYSTORE_PASSWORD }}" -keypass "${{ secrets.KEY_PASSWORD }}" \
+            -dname "CN=PWA, OU=Builder, O=App, L=VN, S=VN, C=VN"
+
+      - name: Biên dịch APK (Tự động đồng ý mọi giấy phép của Google)
         run: |
           cd twa-project
-          sed -i "s/\"display\": \"standalone\"/\"display\": \"${{ env.DISPLAY_MODE }}\"/" twa-manifest.json
+          yes | bubblewrap build --skipSigning=false --keypass="${{ secrets.KEY_PASSWORD }}" --storepass="${{ secrets.KEYSTORE_PASSWORD }}"
 
-      - name: Build APK
-        run: |
-          cd twa-project
-          bubblewrap build
-        env:
-          BUBBLEWRAP_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          BUBBLEWRAP_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-
-      - name: Upload APK to Release
-        uses: softprops/action-gh-release@v1
+      - name: Đẩy file APK lên GitHub Releases công khai
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ env.BUILD_ID }}
           name: "APK ${{ env.BUILD_ID }}"
-          files: twa-project/app-release-signed.apk
+          files: twa-project/*.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Notify success
+      - name: Báo về Worker là Build thành công
         run: |
           curl -X POST ${{ secrets.WORKER_WEBHOOK_URL }}/webhook \
             -H "Content-Type: application/json" \
@@ -72,7 +108,7 @@ jobs:
               "downloadUrl": "https://github.com/${{ github.repository }}/releases/download/build-${{ env.BUILD_ID }}/app-release-signed.apk"
             }'
 
-      - name: Notify failure
+      - name: Báo về Worker nếu gặp lỗi bất ngờ
         if: failure()
         run: |
           curl -X POST ${{ secrets.WORKER_WEBHOOK_URL }}/webhook \
@@ -80,5 +116,5 @@ jobs:
             -d '{
               "buildId": "${{ env.BUILD_ID }}",
               "status": "error",
-              "message": "Build thất bại, kiểm tra lại manifest.json"
+              "message": "GitHub Actions gặp lỗi cấu hình biên dịch."
             }'
