@@ -61,12 +61,16 @@ jobs:
           const { execSync } = require('child_process');
 
           async function main() {
-            // FIX: method đúng là createTwaProject, không phải generateAndroidProject
             const { TwaManifest, TwaGenerator } = require('@bubblewrap/core');
 
             const PWA_URL   = process.env.PWA_URL;
             const PWA_HOST  = process.env.PWA_HOST;
             const WORKSPACE = process.env.GITHUB_WORKSPACE;
+
+            // Sinh packageId động từ domain
+            const domain = PWA_HOST.replace(/\./g, '_').replace(/-/g, '_').replace(/[^a-z0-9_]/gi, '').toLowerCase();
+            const packageId = `com.twa.${domain}`;
+            console.log('✅ Package ID:', packageId);
 
             // Fetch web manifest
             const res = await fetch(`${PWA_URL}/manifest.json`);
@@ -83,20 +87,19 @@ jobs:
             }
             console.log('✅ Icon URL:', iconUrl);
 
-            // Tất cả color là plain hex string
             const twaManifest = new TwaManifest({
-              packageId:                  'com.libraryvn.twa.app',
+              packageId,
               host:                        PWA_HOST,
-              name:                        web.name       || 'Library VN',
-              launcherName:                web.short_name || 'LibVN',
-              display:                     'standalone',
+              name:                        web.name       || 'My PWA App',
+              launcherName:                web.short_name || 'PWA App',
+              display:                     web.display    || 'standalone',
               themeColor:                  web.theme_color      || '#000000',
               themeColorDark:              '#000000',
               navigationColor:             '#000000',
               navigationColorDark:         '#000000',
               navigationDividerColor:      '#00000000',
               navigationDividerColorDark:  '#000000',
-              backgroundColor:             web.background_color || '#000000',
+              backgroundColor:             web.background_color || '#ffffff',
               startUrl:                    web.start_url  || '/',
               iconUrl,
               maskableIconUrl:             iconUrl,
@@ -125,13 +128,12 @@ jobs:
 
             const projectDir = path.join(WORKSPACE, 'twa-project');
 
-            // FIX: đúng method name là createTwaProject
             const generator = new TwaGenerator();
             const log = { debug: console.log, info: console.log, warn: console.warn, error: console.error };
             await generator.createTwaProject(projectDir, twaManifest, log);
             console.log('✅ Android project created at', projectDir);
 
-            // Build APK bằng Gradle trực tiếp — không có prompt
+            // Build APK
             execSync('./gradlew assembleRelease', {
               cwd: projectDir,
               stdio: 'inherit',
