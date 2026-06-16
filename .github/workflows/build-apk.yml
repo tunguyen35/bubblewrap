@@ -1,60 +1,127 @@
-- name: Khoi tao du an TWA
-        run: |
-          mkdir -p twa-project
-          cp $HOME/android.keystore twa-project/android.keystore
-          cd twa-project
+name: TWA Production Builder
 
-          MANIFEST_URL="${{ env.PWA_URL }}/manifest.json"
-          echo "Manifest URL: $MANIFEST_URL"
+on:
+repository_dispatch:
+types: [build-apk]
 
-          # Ghi script expect ra file riêng để tránh lỗi biến
-          cat > /tmp/init.exp << EXPEOF
-          #!/usr/bin/expect -f
-          set timeout 120
-          set manifest_url [lindex \$argv 0]
-          spawn bubblewrap init --manifest=\$manifest_url
+permissions:
+contents: write
 
-          expect "Domain:"
-          send "\r"
-          expect "URL path:"
-          send "\r"
-          expect "name:"
-          send "\r"
-          expect "short name:"
-          send "\r"
-          expect "Display mode:"
-          send "\r"
-          expect "Orientation:"
-          send "\r"
-          expect "Theme Color:"
-          send "\r"
-          expect "Background Color:"
-          send "\r"
-          expect "Start URL:"
-          send "\r"
-          expect "Icon URL:"
-          send "\r"
-          expect "Maskable Icon URL:"
-          send "\r"
-          expect "Monochrome Icon URL:"
-          send "\r"
-          expect "package ID:"
-          send "\r"
-          expect "version:"
-          send "\r"
-          expect "version code:"
-          send "\r"
-          expect "Signing key path:"
-          send "./android.keystore\r"
-          expect "Signing key alias:"
-          send "android\r"
-          expect -re "existing|new|password"
-          send "\r"
-          expect eof
-          EXPEOF
+jobs:
+build-apk:
+runs-on: ubuntu-latest
 
-          chmod +x /tmp/init.exp
-          expect /tmp/init.exp "$MANIFEST_URL"
-        env:
-          BUBBLEWRAP_KEYSTORE_PASSWORD: "123456"
-          BUBBLEWRAP_KEY_PASSWORD: "123456"
+```
+steps:
+  - name: Checkout
+    uses: actions/checkout@v4
+
+  - name: Read Payload
+    run: |
+      echo "BUILD_ID=${{ github.event.client_payload.buildId }}" >> $GITHUB_ENV
+
+      PWA_URL="${{ github.event.client_payload.url }}"
+      PWA_URL="${PWA_URL%/}"
+
+      echo "PWA_URL=$PWA_URL" >> $GITHUB_ENV
+
+      PWA_HOST=$(echo "$PWA_URL" | sed 's|https://||' | sed 's|http://||' | cut -d'/' -f1)
+
+      echo "PWA_HOST=$PWA_HOST" >> $GITHUB_ENV
+
+  - name: Setup Java
+    uses: actions/setup-java@v4
+    with:
+      distribution: temurin
+      java-version: "17"
+
+  - name: Setup Node
+    uses: actions/setup-node@v4
+    with:
+      node-version: "20"
+
+  - name: Install Bubblewrap
+    run: |
+      npm install -g @bubblewrap/cli
+
+  - name: Verify Manifest
+    run: |
+      curl -L "${{ env.PWA_URL }}/manifest.json" -o manifest.json
+      cat manifest.json
+
+  - name: Generate Android Keystore
+    run: |
+      keytool -genkeypair \
+        -alias android \
+        -keyalg RSA \
+        -keysize 2048 \
+        -validity 10000 \
+        -keystore android.keystore \
+        -storepass 123456 \
+        -keypass 123456 \
+        -dname "CN=TWAApp,O=TWA,C=VN"
+
+  - name: Init TWA Project
+    run: |
+      mkdir twa-project
+      cd twa-project
+
+      bubblewrap init \
+        --manifest="${{ env.PWA_URL }}/manifest.json"
+
+  - name: Replace Keystore
+    run: |
+      cp android.keystore twa-project/android.keystore
+
+  - name: Configure Signing
+    run: |
+      cd twa-project
+
+      node <<'EOF'
+      const fs = require('fs');
+
+      const data = JSON.parse(
+        fs.readFileSync('twa-manifest.json', 'utf8')
+      );
+
+      data.signingKey = {
+        path: "./android.keystore",
+        alias: "android"
+      };
+
+      fs.writeFileSync(
+        'twa-manifest.json',
+        JSON.stringify(data, null, 2)
+      );
+      EOF
+
+      cat twa-manifest.json
+
+  - name: Build APK
+    run: |
+      cd twa-project
+
+      export BUBBLEWRAP_KEYSTORE_PASSWORD=123456
+      export BUBBLEWRAP_KEY_PASSWORD=123456
+
+      bubblewrap build
+
+  - name: Locate APK
+    run: |
+      find twa-project -name "*.apk"
+
+  - name: Upload APK Artifact
+    uses: actions/upload-artifact@v4
+    with:
+      name: twa-apk
+      path: twa-project/**/*.apk
+
+  - name: Release APK
+    uses: softprops/action-gh-release@v2
+    with:
+      tag_name: build-${{ env.BUILD_ID }}
+      name: Build ${{ env.BUILD_ID }}
+      files: twa-project/**/*.apk
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+```
