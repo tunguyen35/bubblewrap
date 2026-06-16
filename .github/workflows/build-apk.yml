@@ -46,12 +46,7 @@ jobs:
       - name: Accept SDK Licenses
         run: yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --licenses || true
 
-      - name: Verify Manifest
-        run: |
-          curl -L "${{ env.PWA_URL }}/manifest.json" -o manifest.json
-          cat manifest.json
-
-      - name: Generate Keystore
+      - name: Generate Keystore Chờ Sẵn
         run: |
           keytool -genkeypair \
             -alias android \
@@ -63,26 +58,51 @@ jobs:
             -keypass 123456 \
             -dname "CN=TWAApp,O=TWA,C=VN"
 
-      - name: Init TWA Project
+      - name: Khởi Tạo Dự Án Ép Cấu Hình Chống Treo
         run: |
-          mkdir twa-project
-          cd twa-project
-          yes '' | bubblewrap init --manifest="${{ env.PWA_URL }}/manifest.json"
-
-      - name: Configure Signing
-        run: |
-          cp android.keystore twa-project/android.keystore
-          cd twa-project
+          mkdir twa-project && cd twa-project
+          
+          # 1. Tải file manifest từ web của bạn về máy ảo
+          curl -L "${{ env.PWA_URL }}/manifest.json" -o web-manifest.json
+          
+          # 2. Dùng Node.js bốc dữ liệu sang định dạng twa-manifest.json và TIÊM SẴN khóa ký để chặn đứng câu hỏi
           node << 'EOF'
           const fs = require('fs');
-          const data = JSON.parse(fs.readFileSync('twa-manifest.json', 'utf8'));
-          data.signingKey = { path: "./android.keystore", alias: "android" };
-          fs.writeFileSync('twa-manifest.json', JSON.stringify(data, null, 2));
+          const webManifest = JSON.parse(fs.readFileSync('web-manifest.json', 'utf8'));
+          
+          const twaManifest = {
+            packageId: "com.libraryvn.twa.app",
+            host: "${{ env.PWA_HOST }}",
+            startUrl: webManifest.start_url || "/",
+            name: webManifest.name || "Library VN",
+            launcherName: webManifest.short_name || "Library VN",
+            displayMode: "standalone",
+            themeColor: webManifest.theme_color || "#2196F3",
+            navigationColor: "#000000",
+            backgroundColor: webManifest.background_color || "#FFFFFF",
+            enableNotifications: false,
+            iconUrl: "${{ env.PWA_URL }}/assets/icon-512.png", 
+            signingKey: {
+              path: "../android.keystore",
+              alias: "android"
+            },
+            alphaDependencies: false
+          };
+          
+          fs.writeFileSync('twa-manifest.json', JSON.stringify(twaManifest, null, 2));
           EOF
+          
+          echo "=== FILE MANIFEST ĐÃ ĐƯỢC TIÊM KEY HOÀN CHỈNH ==="
           cat twa-manifest.json
+          
+          # 3. Chạy lệnh init bằng file manifest nội bộ đã bọc thép, đi kèm cờ đồng ý tất cả
+          bubblewrap init --manifest=twa-manifest.json --meta=--yes
 
-      - name: Build APK
-        run: cd twa-project && bubblewrap build
+      - name: Biên dịch APK
+        run: |
+          cd twa-project
+          # Chạy build tự động không dừng chân
+          bubblewrap build --yes --skipSigning=false --keypass="123456" --storepass="123456"
         env:
           BUBBLEWRAP_KEYSTORE_PASSWORD: "123456"
           BUBBLEWRAP_KEY_PASSWORD: "123456"
