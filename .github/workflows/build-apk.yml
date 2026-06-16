@@ -62,29 +62,70 @@ jobs:
         run: |
           mkdir -p twa-project && cd twa-project
 
-          # FIXED: bubblewrap init --manifest phải nhận URL thật, không phải file path
-          echo "" | bubblewrap init --manifest="${{ env.PWA_URL }}/manifest.json"
+          curl -fsSL "${{ env.PWA_URL }}/manifest.json" -o web-manifest.json
 
-          # Sau khi init xong, patch twa-manifest.json để inject signingKey
           node << 'EOF'
           const fs = require('fs');
-          const manifest = JSON.parse(fs.readFileSync('twa-manifest.json', 'utf8'));
+          const webManifest = JSON.parse(fs.readFileSync('web-manifest.json', 'utf8'));
 
-          manifest.signingKey = {
-            path: "../android.keystore",
-            alias: "android"
+          let iconUrl = process.env.PWA_URL + '/assets/icon-512.png';
+          if (webManifest.icons && webManifest.icons.length > 0) {
+            const icon512 = webManifest.icons.find(i => i.sizes === '512x512')
+                         || webManifest.icons[webManifest.icons.length - 1];
+            const src = icon512.src;
+            iconUrl = src.startsWith('http') ? src : process.env.PWA_URL + '/' + src.replace(/^\//, '');
+          }
+
+          const twaManifest = {
+            packageId: "com.libraryvn.twa.app",
+            host: process.env.PWA_HOST,
+            startUrl: webManifest.start_url || "/",
+            name: webManifest.name || "Library VN",
+            launcherName: webManifest.short_name || "Library VN",
+            display: "standalone",
+            themeColor: webManifest.theme_color || "#000000",
+            navigationColor: "#000000",
+            backgroundColor: webManifest.background_color || "#000000",
+            enableNotifications: false,
+            iconUrl: iconUrl,
+            maskableIconUrl: iconUrl,
+            monochromeIconUrl: iconUrl,
+            signingKey: {
+              path: "../android.keystore",
+              alias: "android"
+            },
+            appVersionCode: 1,
+            appVersionName: "1.0.0",
+            shortcuts: [],
+            generatorApp: "bubblewrap-cli",
+            webManifestUrl: process.env.PWA_URL + "/manifest.json",
+            fallbackType: "customtabs",
+            features: {},
+            alphaDependencies: { enabled: false },
+            enableSiteSettingsShortcut: true,
+            isChromeOSOnly: false,
+            isMetaQuest: false,
+            fullScopeUrl: process.env.PWA_URL + "/",
+            minSdkVersion: 19,
+            orientation: "default",
+            fingerprints: [],
+            serviceAccountJsonFile: ""
           };
-          manifest.packageId = "com.libraryvn.twa.app";
 
-          fs.writeFileSync('twa-manifest.json', JSON.stringify(manifest, null, 2));
-          console.log('=== TWA MANIFEST SAU KHI PATCH ===');
-          console.log(JSON.stringify(manifest, null, 2));
+          fs.writeFileSync('twa-manifest.json', JSON.stringify(twaManifest, null, 2));
+          console.log('=== TWA MANIFEST ===');
+          console.log(JSON.stringify(twaManifest, null, 2));
           EOF
+
+          # FIXED: dùng update thay init - không có prompt, đọc thẳng twa-manifest.json
+          bubblewrap update
+        env:
+          PWA_URL: ${{ env.PWA_URL }}
+          PWA_HOST: ${{ env.PWA_HOST }}
 
       - name: Biên dịch APK
         working-directory: twa-project
-        run: |
-          echo "" | bubblewrap build --yes
+        run: bubblewrap build --yes
         env:
           BUBBLEWRAP_KEYSTORE_PASSWORD: "123456"
           BUBBLEWRAP_KEY_PASSWORD: "123456"
