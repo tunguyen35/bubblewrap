@@ -74,86 +74,70 @@ jobs:
             -keypass "123456" \
             -dname "CN=TWAApp, OU=App, O=TWA, L=HN, S=HN, C=VN"
 
-      - name: Khởi tạo dự án TWA (tự động trả lời câu hỏi)
+  - name: Khởi tạo dự án TWA (tự động trả lời câu hỏi)
         run: |
           mkdir -p twa-project
           cp $HOME/android.keystore twa-project/android.keystore
           cd twa-project
 
-          # Dùng expect để tự động trả lời tất cả câu hỏi của bubblewrap init
-          expect << 'EOF'
+          MANIFEST_URL="${{ env.PWA_URL }}/manifest.json"
+          echo "Manifest URL: $MANIFEST_URL"
+
+          expect << EOF
           set timeout 120
-          spawn bubblewrap init --manifest="${{ env.PWA_URL }}/manifest.json"
+          spawn bubblewrap init --manifest="\$MANIFEST_URL"
           
-          # Domain
           expect "Domain:"
           send "\r"
           
-          # URL path
           expect "URL path:"
           send "\r"
           
-          # App name
           expect "name:"
           send "\r"
           
-          # Short name
           expect "short name:"
           send "\r"
           
-          # Display mode
           expect "Display mode:"
           send "\r"
           
-          # Orientation
           expect "Orientation:"
           send "\r"
           
-          # Theme color
           expect "Theme Color:"
           send "\r"
           
-          # Background color
           expect "Background Color:"
           send "\r"
           
-          # Start URL
           expect "Start URL:"
           send "\r"
           
-          # Icon URL
           expect "Icon URL:"
           send "\r"
           
-          # Maskable icon
           expect "Maskable Icon URL:"
           send "\r"
           
-          # Monochrome icon
           expect "Monochrome Icon URL:"
           send "\r"
           
-          # Package ID
           expect "package ID:"
           send "\r"
           
-          # App version
           expect "version:"
           send "\r"
           
-          # Version code
           expect "version code:"
           send "\r"
           
-          # Signing key path
           expect "Signing key path:"
           send "./android.keystore\r"
           
-          # Signing key alias
           expect "Signing key alias:"
           send "android\r"
           
-          # Create new key
           expect -re "existing|new|password"
           send "\r"
 
@@ -162,7 +146,6 @@ jobs:
         env:
           BUBBLEWRAP_KEYSTORE_PASSWORD: "123456"
           BUBBLEWRAP_KEY_PASSWORD: "123456"
-
       - name: Biên dịch APK
         run: cd twa-project && bubblewrap build
         env:
