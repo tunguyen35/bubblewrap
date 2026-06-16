@@ -38,22 +38,23 @@ jobs:
       - name: Accept SDK Licenses
         run: yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --licenses || true
 
-      - name: Generate Keystore
+      - name: Generate Keystore Thuật Toán Chuẩn
         run: |
           keytool -genkeypair \
             -alias android \
             -keyalg RSA \
             -keysize 2048 \
+            -sigalg SHA256withRSA \
             -validity 10000 \
             -keystore ${{ github.workspace }}/android.keystore \
             -storepass 123456 \
             -keypass 123456 \
             -dname "CN=TWAApp,O=TWA,C=VN"
 
-      - name: Install @bubblewrap/core
+      - name: Install Bubblewrap Dependencies
         run: npm install @bubblewrap/core
 
-      - name: Generate & Build TWA (headless)
+      - name: Generate & Build TWA (Headless Chuẩn Chữ Ký)
         run: |
           node << 'SCRIPT'
           const path = require('path');
@@ -61,79 +62,82 @@ jobs:
           const { execSync } = require('child_process');
 
           async function main() {
-            const { TwaManifest, TwaGenerator } = require('@bubblewrap/core');
+            const { TwaManifest, TwaGenerator, AndroidSdkTools } = require('@bubblewrap/core');
 
             const PWA_URL   = process.env.PWA_URL;
             const PWA_HOST  = process.env.PWA_HOST;
             const WORKSPACE = process.env.GITHUB_WORKSPACE;
 
-            // Sinh packageId động từ domain
+            // Đổi cấu hình Package ID sạch dòng đời
             const domain = PWA_HOST.replace(/\./g, '_').replace(/-/g, '_').replace(/[^a-z0-9_]/gi, '').toLowerCase();
-            const packageId = `com.twa.${domain}`;
-            console.log('✅ Package ID:', packageId);
+            const packageId = `net.twa.${domain}.app`;
+            console.log('✅ Package ID Sạch:', packageId);
 
-            // Fetch web manifest
-            const res = await fetch(`${PWA_URL}/manifest.json`);
-            const web = await res.json();
-            console.log('✅ Fetched manifest:', JSON.stringify(web, null, 2));
+            // Fetch web manifest mẫu cứu hộ phòng hờ lỗi
+            let web = {};
+            try {
+              const res = await fetch(`${PWA_URL}/manifest.json`);
+              web = await res.json();
+            } catch(e) {
+              console.log('⚠️ Không fetch được manifest trực tuyến, dùng fallback mặc định.');
+            }
 
             // Resolve icon URL
-            let iconUrl = `${PWA_URL}/assets/icon-512.png`;
+            let iconUrl = "https://upload.wikimedia.org/wikipedia/commons/d/d5/Progressive_Web_Apps_Logo.png";
             if (web.icons && web.icons.length > 0) {
               const icon = web.icons.find(i => i.sizes === '512x512') || web.icons.at(-1);
-              iconUrl = icon.src.startsWith('http')
-                ? icon.src
-                : `${PWA_URL}/${icon.src.replace(/^\//, '')}`;
+              iconUrl = icon.src.startsWith('http') ? icon.src : `${PWA_URL}/${icon.src.replace(/^\//, '')}`;
             }
-            console.log('✅ Icon URL:', iconUrl);
 
             const twaManifest = new TwaManifest({
               packageId,
-              host:                        PWA_HOST,
-              name:                        web.name       || 'My PWA App',
-              launcherName:                web.short_name || 'PWA App',
-              display:                     web.display    || 'standalone',
-              themeColor:                  web.theme_color      || '#000000',
-              themeColorDark:              '#000000',
-              navigationColor:             '#000000',
-              navigationColorDark:         '#000000',
-              navigationDividerColor:      '#00000000',
-              navigationDividerColorDark:  '#000000',
-              backgroundColor:             web.background_color || '#ffffff',
-              startUrl:                    web.start_url  || '/',
+              host:                         PWA_HOST,
+              name:                         web.name       || 'Library VN',
+              launcherName:                 web.short_name || 'Library VN',
+              display:                      web.display    || 'standalone',
+              themeColor:                   web.theme_color      || '#2196F3',
+              themeColorDark:               '#000000',
+              navigationColor:              '#000000',
+              navigationColorDark:          '#000000',
+              navigationDividerColor:       '#00000000',
+              navigationDividerColorDark:   '#000000',
+              backgroundColor:              web.background_color || '#ffffff',
+              startUrl:                     web.start_url  || '/',
               iconUrl,
-              maskableIconUrl:             iconUrl,
-              monochromeIconUrl:           iconUrl,
-              appVersion:                  '1.0.0',
-              appVersionCode:              1,
+              maskableIconUrl:              iconUrl,
+              monochromeIconUrl:            iconUrl,
+              appVersion:                   '1.0.0',
+              appVersionCode:               1,
               signingKey: {
                 path:  path.join(WORKSPACE, 'android.keystore'),
                 alias: 'android',
               },
               splashScreenFadeOutDuration: 300,
-              enableNotifications:         false,
-              shortcuts:                   [],
-              webManifestUrl:              `${PWA_URL}/manifest.json`,
-              fallbackType:                'customtabs',
-              features:                    {},
-              alphaDependencies:           { enabled: false },
-              enableSiteSettingsShortcut:  true,
-              isChromeOSOnly:              false,
-              isMetaQuest:                 false,
-              fullScopeUrl:                `${PWA_URL}/`,
-              minSdkVersion:               21,
-              orientation:                 'default',
-              fingerprints:                [],
+              enableNotifications:          false,
+              shortcuts:                    [],
+              webManifestUrl:               `${PWA_URL}/manifest.json`,
+              fallbackType:                 'customtabs',
+              features:                     {},
+              alphaDependencies:            { enabled: false },
+              enableSiteSettingsShortcut:   true,
+              isChromeOSOnly:               false,
+              isMetaQuest:                  false,
+              fullScopeUrl:                 `${PWA_URL}/`,
+              minSdkVersion:                24, // Android 7.0 trở lên mới cài được
+              targetSdkVersion:             33, // Ép API 33 để sideload mượt mà nhất
+              orientation:                  'default',
+              fingerprints:                 [],
             });
 
             const projectDir = path.join(WORKSPACE, 'twa-project');
-
             const generator = new TwaGenerator();
             const log = { debug: console.log, info: console.log, warn: console.warn, error: console.error };
+            
+            // 1. Tạo Source Code Android sạch
             await generator.createTwaProject(projectDir, twaManifest, log);
             console.log('✅ Android project created at', projectDir);
 
-            // Build APK
+            // 2. Biên dịch mã nguồn với Gradle để tạo ra file .apk gốc
             execSync('./gradlew assembleRelease', {
               cwd: projectDir,
               stdio: 'inherit',
@@ -141,53 +145,48 @@ jobs:
             });
             console.log('✅ Gradle build complete');
 
-            // Sign APK
-            const unsignedApk = path.join(
-              projectDir,
-              'app/build/outputs/apk/release/app-release-unsigned.apk'
-            );
-            const signedApk = path.join(projectDir, 'app-release-signed.apk');
+            // 3. Quy trình chuẩn hóa chữ ký số Android SDK: ZIPALIGN TRƯỚC -> APKSIGNER SAU
+            const sdkTools = new AndroidSdkTools(process.env.ANDROID_SDK_ROOT);
+            const buildToolsVer = fs.readdirSync(`${process.env.ANDROID_SDK_ROOT}/build-tools`).sort().at(-1);
+            const buildToolsPath = path.join(process.env.ANDROID_SDK_ROOT, 'build-tools', buildToolsVer);
+            
+            const unsignedApk = path.join(projectDir, 'app/build/outputs/apk/release/app-release-unsigned.apk');
+            const alignedApk = path.join(projectDir, 'app-release-aligned.apk');
+            const finalApk = path.join(WORKSPACE, 'final-app-release.apk');
+
+            // Chạy căn chỉnh bộ nhớ hệ thống (Zipalign)
+            console.log('🚀 Đang chạy Zipalign...');
+            execSync(`${path.join(buildToolsPath, 'zipalign')} -v 4 ${unsignedApk} ${alignedApk}`, { stdio: 'ignore' });
+
+            // Chạy Apksigner (Ép tích hợp toàn diện chữ ký V2/V3) thay cho Jarsigner lỗi thời
+            console.log('🚀 Đang chạy Apksigner (Ký sâu V2/V3)...');
             execSync(
-              `jarsigner -verbose -sigalg SHA256withRSA -digestalg SHA-256 ` +
-              `-keystore ${path.join(WORKSPACE, 'android.keystore')} ` +
-              `-storepass 123456 -keypass 123456 ` +
-              `-signedjar ${signedApk} ${unsignedApk} android`,
+              `${path.join(buildToolsPath, 'apksigner')} sign ` +
+              `--ks ${path.join(WORKSPACE, 'android.keystore')} ` +
+              `--ks-pass pass:123456 --key-pass pass:123456 ` +
+              `--out ${finalApk} ${alignedApk}`,
               { stdio: 'inherit' }
             );
-            console.log('✅ Signed APK:', signedApk);
-
-            // zipalign
-            const buildToolsVer = fs
-              .readdirSync(`${process.env.ANDROID_SDK_ROOT}/build-tools`)
-              .sort()
-              .at(-1);
-            const zipalign   = `${process.env.ANDROID_SDK_ROOT}/build-tools/${buildToolsVer}/zipalign`;
-            const alignedApk = path.join(projectDir, 'app-release-aligned.apk');
-            execSync(`${zipalign} -v 4 ${signedApk} ${alignedApk}`, { stdio: 'inherit' });
-            console.log('✅ Aligned APK:', alignedApk);
+            console.log('🎯 XỬ LÝ HOÀN TẤT! File APK tối ưu đã được tạo tại:', finalApk);
           }
 
           main().catch(e => { console.error(e); process.exit(1); });
           SCRIPT
         env:
-          PWA_URL:          ${{ env.PWA_URL }}
-          PWA_HOST:         ${{ env.PWA_HOST }}
+          PWA_URL: ${{ env.PWA_URL }}
+          PWA_HOST: ${{ env.PWA_HOST }}
           GITHUB_WORKSPACE: ${{ github.workspace }}
 
-      - name: Locate APK & Set Env
+      - name: Gán biến môi trường phát hành
         run: |
-          APK_PATH=$(find twa-project -name "*.apk" | sort | tail -n 1)
-          echo "APK_PATH=$APK_PATH" >> $GITHUB_ENV
-          APK_NAME=$(basename "$APK_PATH")
-          echo "APK_NAME=$APK_NAME" >> $GITHUB_ENV
-          echo "Found APK: $APK_PATH"
+          echo "APK_PATH=${{ github.workspace }}/final-app-release.apk" >> $GITHUB_ENV
 
-      - name: Release APK
+      - name: Release APK lên GitHub
         uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ env.BUILD_ID }}
           name: Build ${{ env.BUILD_ID }}
-          files: twa-project/**/*.apk
+          files: ${{ env.APK_PATH }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -196,13 +195,16 @@ jobs:
         run: |
           if [ ! -z "${{ secrets.WORKER_WEBHOOK_URL }}" ]; then
             STATUS="${{ job.status }}"
+            BASE_URL="${{ secrets.WORKER_WEBHOOK_URL }}"
+            BASE_URL="${BASE_URL%/}"
+            
             if [ "$STATUS" = "success" ]; then
-              curl -X POST "${{ secrets.WORKER_WEBHOOK_URL }}/webhook" \
+              curl -X POST "$BASE_URL/webhook" \
                 -H "Content-Type: application/json" \
-                -d "{\"buildId\": \"${{ env.BUILD_ID }}\", \"status\": \"success\", \"downloadUrl\": \"https://github.com/${{ github.repository }}/releases/download/build-${{ env.BUILD_ID }}/${{ env.APK_NAME }}\"}"
+                -d "{\"buildId\": \"${{ env.BUILD_ID }}\", \"status\": \"success\", \"downloadUrl\": \"https://github.com/${{ github.repository }}/releases/download/build-${{ env.BUILD_ID }}/final-app-release.apk\"}"
             else
-              curl -X POST "${{ secrets.WORKER_WEBHOOK_URL }}/webhook" \
+              curl -X POST "$BASE_URL/webhook" \
                 -H "Content-Type: application/json" \
-                -d "{\"buildId\": \"${{ env.BUILD_ID }}\", \"status\": \"error\", \"message\": \"Build that bai.\"}"
+                -d "{\"buildId\": \"${{ env.BUILD_ID }}\", \"status\": \"error\", \"message\": \"Build thất bại tại GitHub.\"}"
             fi
           fi
