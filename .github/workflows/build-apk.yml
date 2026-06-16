@@ -122,7 +122,7 @@ jobs:
       - name: Báo về Worker nếu gặp lỗi bất ngờ
         if: failure()
         run: |
-          curl -X POST ${{ secrets.WORKER_WEBHOOK_URL }}/webhook \
+          curl -X POST ${{ secrets.WORKER_WEBHOOK_https://pwatoapk.nguyen-v-tu-9849.workers.dev }}/webhook \
             -H "Content-Type: application/json" \
             -d '{
               "buildId": "${{ env.BUILD_ID }}",
