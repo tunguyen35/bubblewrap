@@ -35,14 +35,6 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Install Bubblewrap
-        run: npm install -g @bubblewrap/cli
-
-      - name: Config Android SDK
-        run: |
-          mkdir -p ~/.bubblewrap
-          echo "{\"jdkPath\": \"${JAVA_HOME}\", \"androidSdkPath\": \"${ANDROID_SDK_ROOT}\"}" > ~/.bubblewrap/config.json
-
       - name: Accept SDK Licenses
         run: yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --licenses || true
 
@@ -53,82 +45,129 @@ jobs:
             -keyalg RSA \
             -keysize 2048 \
             -validity 10000 \
-            -keystore android.keystore \
+            -keystore ${{ github.workspace }}/android.keystore \
             -storepass 123456 \
             -keypass 123456 \
             -dname "CN=TWAApp,O=TWA,C=VN"
 
-      - name: Khởi Tạo Dự Án TWA
+      - name: Install @bubblewrap/core
+        run: npm install @bubblewrap/core
+
+      # FIXED: Dùng @bubblewrap/core API trực tiếp — KHÔNG có prompt, KHÔNG bị treo
+      - name: Generate & Build TWA (headless)
         run: |
-          mkdir -p twa-project && cd twa-project
+          node << 'SCRIPT'
+          const path = require('path');
+          const { execSync } = require('child_process');
 
-          curl -fsSL "${{ env.PWA_URL }}/manifest.json" -o web-manifest.json
+          async function main() {
+            const { TwaManifest, TwaGenerator, AndroidSdkTools, Config, JdkHelper } = require('@bubblewrap/core');
 
-          node << 'EOF'
-          const fs = require('fs');
-          const webManifest = JSON.parse(fs.readFileSync('web-manifest.json', 'utf8'));
+            const PWA_URL  = process.env.PWA_URL;
+            const PWA_HOST = process.env.PWA_HOST;
+            const WORKSPACE = process.env.GITHUB_WORKSPACE;
 
-          let iconUrl = process.env.PWA_URL + '/assets/icon-512.png';
-          if (webManifest.icons && webManifest.icons.length > 0) {
-            const icon512 = webManifest.icons.find(i => i.sizes === '512x512')
-                         || webManifest.icons[webManifest.icons.length - 1];
-            const src = icon512.src;
-            iconUrl = src.startsWith('http') ? src : process.env.PWA_URL + '/' + src.replace(/^\//, '');
+            // Fetch web manifest
+            const res  = await fetch(`${PWA_URL}/manifest.json`);
+            const web  = await res.json();
+
+            // Resolve icon URL
+            let iconUrl = `${PWA_URL}/assets/icon-512.png`;
+            if (web.icons && web.icons.length > 0) {
+              const icon = web.icons.find(i => i.sizes === '512x512') || web.icons.at(-1);
+              iconUrl = icon.src.startsWith('http') ? icon.src : `${PWA_URL}/${icon.src.replace(/^\//, '')}`;
+            }
+
+            // Build TwaManifest object
+            const twaManifest = new TwaManifest({
+              packageId:              'com.libraryvn.twa.app',
+              host:                   PWA_HOST,
+              name:                   web.name        || 'Library VN',
+              launcherName:           web.short_name  || 'LibVN',
+              display:                'standalone',
+              themeColor:             { id: 'themeColor', hex: web.theme_color      || '#000000' },
+              navigationColor:        { id: 'navigationColor', hex: '#000000' },
+              navigationColorDark:    { id: 'navigationColorDark', hex: '#000000' },
+              navigationDividerColor: { id: 'navigationDividerColor', hex: '#000000' },
+              backgroundColor:        { id: 'backgroundColor', hex: web.background_color || '#000000' },
+              startUrl:               web.start_url   || '/',
+              iconUrl,
+              maskableIconUrl:        iconUrl,
+              monochromeIconUrl:      iconUrl,
+              appVersionCode:         1,
+              appVersionName:         '1.0.0',
+              signingKey: {
+                path:  path.join(WORKSPACE, 'android.keystore'),
+                alias: 'android',
+              },
+              splashScreenFadeOutDuration: 300,
+              enableNotifications:    false,
+              shortcuts:              [],
+              webManifestUrl:         `${PWA_URL}/manifest.json`,
+              fallbackType:           'customtabs',
+              features:               {},
+              alphaDependencies:      { enabled: false },
+              enableSiteSettingsShortcut: true,
+              isChromeOSOnly:         false,
+              isMetaQuest:            false,
+              fullScopeUrl:           `${PWA_URL}/`,
+              minSdkVersion:          19,
+              orientation:            'default',
+              fingerprints:           [],
+            });
+
+            const projectDir = path.join(WORKSPACE, 'twa-project');
+            const config = new Config(
+              process.env.JAVA_HOME,
+              process.env.ANDROID_SDK_ROOT
+            );
+
+            // Generate Android project files — NO PROMPTS
+            const generator = new TwaGenerator();
+            await generator.generateAndroidProject(projectDir, twaManifest);
+            console.log('✅ Android project generated');
+
+            // Build APK using Gradle directly (bypass bubblewrap build prompts)
+            console.log('🔨 Building APK...');
+            execSync(
+              './gradlew assembleRelease',
+              {
+                cwd: projectDir,
+                stdio: 'inherit',
+                env: {
+                  ...process.env,
+                  JAVA_HOME: process.env.JAVA_HOME,
+                },
+              }
+            );
+            console.log('✅ Build complete');
+
+            // Sign APK
+            const unsignedApk = path.join(projectDir, 'app/build/outputs/apk/release/app-release-unsigned.apk');
+            const signedApk   = path.join(projectDir, 'app-release-signed.apk');
+            execSync(
+              `jarsigner -verbose -sigalg SHA256withRSA -digestalg SHA-256 \
+               -keystore ${path.join(WORKSPACE, 'android.keystore')} \
+               -storepass 123456 -keypass 123456 \
+               -signedjar ${signedApk} ${unsignedApk} android`,
+              { stdio: 'inherit' }
+            );
+            console.log(`✅ Signed APK: ${signedApk}`);
+
+            // zipalign
+            const buildToolsDir = require('fs').readdirSync(`${process.env.ANDROID_SDK_ROOT}/build-tools`).at(-1);
+            const zipalign = `${process.env.ANDROID_SDK_ROOT}/build-tools/${buildToolsDir}/zipalign`;
+            const alignedApk = path.join(projectDir, 'app-release-aligned.apk');
+            execSync(`${zipalign} -v 4 ${signedApk} ${alignedApk}`, { stdio: 'inherit' });
+            console.log(`✅ Aligned APK: ${alignedApk}`);
           }
 
-          const twaManifest = {
-            packageId: "com.libraryvn.twa.app",
-            host: process.env.PWA_HOST,
-            startUrl: webManifest.start_url || "/",
-            name: webManifest.name || "Library VN",
-            launcherName: webManifest.short_name || "Library VN",
-            display: "standalone",
-            themeColor: webManifest.theme_color || "#000000",
-            navigationColor: "#000000",
-            backgroundColor: webManifest.background_color || "#000000",
-            enableNotifications: false,
-            iconUrl: iconUrl,
-            maskableIconUrl: iconUrl,
-            monochromeIconUrl: iconUrl,
-            signingKey: {
-              path: "../android.keystore",
-              alias: "android"
-            },
-            appVersionCode: 1,
-            appVersionName: "1.0.0",
-            shortcuts: [],
-            generatorApp: "bubblewrap-cli",
-            webManifestUrl: process.env.PWA_URL + "/manifest.json",
-            fallbackType: "customtabs",
-            features: {},
-            alphaDependencies: { enabled: false },
-            enableSiteSettingsShortcut: true,
-            isChromeOSOnly: false,
-            isMetaQuest: false,
-            fullScopeUrl: process.env.PWA_URL + "/",
-            minSdkVersion: 19,
-            orientation: "default",
-            fingerprints: [],
-            serviceAccountJsonFile: ""
-          };
-
-          fs.writeFileSync('twa-manifest.json', JSON.stringify(twaManifest, null, 2));
-          console.log('=== TWA MANIFEST ===');
-          console.log(JSON.stringify(twaManifest, null, 2));
-          EOF
-
-          # FIXED: dùng update thay init - không có prompt, đọc thẳng twa-manifest.json
-          bubblewrap update
+          main().catch(e => { console.error(e); process.exit(1); });
+          SCRIPT
         env:
-          PWA_URL: ${{ env.PWA_URL }}
-          PWA_HOST: ${{ env.PWA_HOST }}
-
-      - name: Biên dịch APK
-        working-directory: twa-project
-        run: bubblewrap build --yes
-        env:
-          BUBBLEWRAP_KEYSTORE_PASSWORD: "123456"
-          BUBBLEWRAP_KEY_PASSWORD: "123456"
+          PWA_URL:          ${{ env.PWA_URL }}
+          PWA_HOST:         ${{ env.PWA_HOST }}
+          GITHUB_WORKSPACE: ${{ github.workspace }}
 
       - name: Locate APK & Set Env
         run: |
