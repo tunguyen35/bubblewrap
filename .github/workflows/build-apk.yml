@@ -22,10 +22,16 @@ jobs:
       - name: Lấy thông tin cấu hình từ Worker
         run: |
           echo "BUILD_ID=${{ github.event.client_payload.buildId }}" >> $GITHUB_ENV
-          
+
           PWA_URL="${{ github.event.client_payload.url }}"
+          # Bỏ dấu / cuối nếu có
+          PWA_URL="${PWA_URL%/}"
           echo "PWA_URL=$PWA_URL" >> $GITHUB_ENV
-          
+
+          # Lấy host sạch không có https://
+          PWA_HOST=$(echo "$PWA_URL" | sed 's|https://||' | sed 's|http://||' | sed 's|/.*||')
+          echo "PWA_HOST=$PWA_HOST" >> $GITHUB_ENV
+
           DISPLAY_MODE="${{ github.event.client_payload.displayMode }}"
           if [ -z "$DISPLAY_MODE" ] || [ "$DISPLAY_MODE" = "undefined" ]; then DISPLAY_MODE="standalone"; fi
           echo "DISPLAY_MODE=$DISPLAY_MODE" >> $GITHUB_ENV
@@ -41,10 +47,12 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Cài đặt Bubblewrap CLI
-        run: npm i -g @bubblewrap/cli
+      - name: Cài đặt Bubblewrap CLI và expect
+        run: |
+          npm i -g @bubblewrap/cli
+          sudo apt-get install -y expect
 
-      - name: Cấu hình đường dẫn Android SDK
+      - name: Cấu hình Android SDK
         run: |
           mkdir -p ~/.bubblewrap
           echo "{\"jdkPath\": \"${JAVA_HOME}\", \"androidSdkPath\": \"${ANDROID_SDK_ROOT}\"}" > ~/.bubblewrap/config.json
@@ -57,7 +65,7 @@ jobs:
       - name: Tạo keystore ký APK
         run: |
           keytool -genkey -v \
-            -keystore android.keystore \
+            -keystore $HOME/android.keystore \
             -alias android \
             -keyalg RSA \
             -keysize 2048 \
@@ -66,13 +74,91 @@ jobs:
             -keypass "123456" \
             -dname "CN=TWAApp, OU=App, O=TWA, L=HN, S=HN, C=VN"
 
-      - name: Khởi tạo dự án TWA
+      - name: Khởi tạo dự án TWA (tự động trả lời câu hỏi)
         run: |
-          mkdir twa-project && cd twa-project
-          cp ../android.keystore ./android.keystore
+          mkdir -p twa-project
+          cp $HOME/android.keystore twa-project/android.keystore
+          cd twa-project
+
+          # Dùng expect để tự động trả lời tất cả câu hỏi của bubblewrap init
+          expect << 'EOF'
+          set timeout 120
+          spawn bubblewrap init --manifest="${{ env.PWA_URL }}/manifest.json"
           
-          # Nhấn Enter tự động cho tất cả câu hỏi, dùng giá trị mặc định từ manifest
-          printf '\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n' | bubblewrap init --manifest="${{ env.PWA_URL }}/manifest.json"
+          # Domain
+          expect "Domain:"
+          send "\r"
+          
+          # URL path
+          expect "URL path:"
+          send "\r"
+          
+          # App name
+          expect "name:"
+          send "\r"
+          
+          # Short name
+          expect "short name:"
+          send "\r"
+          
+          # Display mode
+          expect "Display mode:"
+          send "\r"
+          
+          # Orientation
+          expect "Orientation:"
+          send "\r"
+          
+          # Theme color
+          expect "Theme Color:"
+          send "\r"
+          
+          # Background color
+          expect "Background Color:"
+          send "\r"
+          
+          # Start URL
+          expect "Start URL:"
+          send "\r"
+          
+          # Icon URL
+          expect "Icon URL:"
+          send "\r"
+          
+          # Maskable icon
+          expect "Maskable Icon URL:"
+          send "\r"
+          
+          # Monochrome icon
+          expect "Monochrome Icon URL:"
+          send "\r"
+          
+          # Package ID
+          expect "package ID:"
+          send "\r"
+          
+          # App version
+          expect "version:"
+          send "\r"
+          
+          # Version code
+          expect "version code:"
+          send "\r"
+          
+          # Signing key path
+          expect "Signing key path:"
+          send "./android.keystore\r"
+          
+          # Signing key alias
+          expect "Signing key alias:"
+          send "android\r"
+          
+          # Create new key
+          expect -re "existing|new|password"
+          send "\r"
+
+          expect eof
+          EOF
         env:
           BUBBLEWRAP_KEYSTORE_PASSWORD: "123456"
           BUBBLEWRAP_KEY_PASSWORD: "123456"
