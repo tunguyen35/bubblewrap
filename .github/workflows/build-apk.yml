@@ -24,11 +24,9 @@ jobs:
           echo "BUILD_ID=${{ github.event.client_payload.buildId }}" >> $GITHUB_ENV
 
           PWA_URL="${{ github.event.client_payload.url }}"
-          # Bỏ dấu / cuối nếu có
           PWA_URL="${PWA_URL%/}"
           echo "PWA_URL=$PWA_URL" >> $GITHUB_ENV
 
-          # Lấy host sạch không có https://
           PWA_HOST=$(echo "$PWA_URL" | sed 's|https://||' | sed 's|http://||' | sed 's|/.*||')
           echo "PWA_HOST=$PWA_HOST" >> $GITHUB_ENV
 
@@ -74,7 +72,7 @@ jobs:
             -keypass "123456" \
             -dname "CN=TWAApp, OU=App, O=TWA, L=HN, S=HN, C=VN"
 
-  - name: Khởi tạo dự án TWA (tự động trả lời câu hỏi)
+      - name: Khởi tạo dự án TWA
         run: |
           mkdir -p twa-project
           cp $HOME/android.keystore twa-project/android.keystore
@@ -86,58 +84,58 @@ jobs:
           expect << EOF
           set timeout 120
           spawn bubblewrap init --manifest="\$MANIFEST_URL"
-          
+
           expect "Domain:"
           send "\r"
-          
+
           expect "URL path:"
           send "\r"
-          
+
           expect "name:"
           send "\r"
-          
+
           expect "short name:"
           send "\r"
-          
+
           expect "Display mode:"
           send "\r"
-          
+
           expect "Orientation:"
           send "\r"
-          
+
           expect "Theme Color:"
           send "\r"
-          
+
           expect "Background Color:"
           send "\r"
-          
+
           expect "Start URL:"
           send "\r"
-          
+
           expect "Icon URL:"
           send "\r"
-          
+
           expect "Maskable Icon URL:"
           send "\r"
-          
+
           expect "Monochrome Icon URL:"
           send "\r"
-          
+
           expect "package ID:"
           send "\r"
-          
+
           expect "version:"
           send "\r"
-          
+
           expect "version code:"
           send "\r"
-          
+
           expect "Signing key path:"
           send "./android.keystore\r"
-          
+
           expect "Signing key alias:"
           send "android\r"
-          
+
           expect -re "existing|new|password"
           send "\r"
 
@@ -146,6 +144,7 @@ jobs:
         env:
           BUBBLEWRAP_KEYSTORE_PASSWORD: "123456"
           BUBBLEWRAP_KEY_PASSWORD: "123456"
+
       - name: Biên dịch APK
         run: cd twa-project && bubblewrap build
         env:
