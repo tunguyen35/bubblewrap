@@ -1,127 +1,116 @@
 name: TWA Production Builder
 
 on:
-repository_dispatch:
-types: [build-apk]
+  repository_dispatch:
+    types: [build-apk]
 
 permissions:
-contents: write
+  contents: write
 
 jobs:
-build-apk:
-runs-on: ubuntu-latest
+  build-apk:
+    runs-on: ubuntu-latest
 
-```
-steps:
-  - name: Checkout
-    uses: actions/checkout@v4
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-  - name: Read Payload
-    run: |
-      echo "BUILD_ID=${{ github.event.client_payload.buildId }}" >> $GITHUB_ENV
+      - name: Read Payload
+        run: |
+          echo "BUILD_ID=${{ github.event.client_payload.buildId }}" >> $GITHUB_ENV
+          PWA_URL="${{ github.event.client_payload.url }}"
+          PWA_URL="${PWA_URL%/}"
+          echo "PWA_URL=$PWA_URL" >> $GITHUB_ENV
+          PWA_HOST=$(echo "$PWA_URL" | sed 's|https://||' | sed 's|http://||' | cut -d'/' -f1)
+          echo "PWA_HOST=$PWA_HOST" >> $GITHUB_ENV
 
-      PWA_URL="${{ github.event.client_payload.url }}"
-      PWA_URL="${PWA_URL%/}"
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
 
-      echo "PWA_URL=$PWA_URL" >> $GITHUB_ENV
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
 
-      PWA_HOST=$(echo "$PWA_URL" | sed 's|https://||' | sed 's|http://||' | cut -d'/' -f1)
+      - name: Install Bubblewrap
+        run: npm install -g @bubblewrap/cli
 
-      echo "PWA_HOST=$PWA_HOST" >> $GITHUB_ENV
+      - name: Config Android SDK
+        run: |
+          mkdir -p ~/.bubblewrap
+          echo "{\"jdkPath\": \"${JAVA_HOME}\", \"androidSdkPath\": \"${ANDROID_SDK_ROOT}\"}" > ~/.bubblewrap/config.json
 
-  - name: Setup Java
-    uses: actions/setup-java@v4
-    with:
-      distribution: temurin
-      java-version: "17"
+      - name: Accept SDK Licenses
+        run: yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --licenses || true
 
-  - name: Setup Node
-    uses: actions/setup-node@v4
-    with:
-      node-version: "20"
+      - name: Verify Manifest
+        run: |
+          curl -L "${{ env.PWA_URL }}/manifest.json" -o manifest.json
+          cat manifest.json
 
-  - name: Install Bubblewrap
-    run: |
-      npm install -g @bubblewrap/cli
+      - name: Generate Keystore
+        run: |
+          keytool -genkeypair \
+            -alias android \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -keystore android.keystore \
+            -storepass 123456 \
+            -keypass 123456 \
+            -dname "CN=TWAApp,O=TWA,C=VN"
 
-  - name: Verify Manifest
-    run: |
-      curl -L "${{ env.PWA_URL }}/manifest.json" -o manifest.json
-      cat manifest.json
+      - name: Init TWA Project
+        run: |
+          mkdir twa-project
+          cd twa-project
+          yes '' | bubblewrap init --manifest="${{ env.PWA_URL }}/manifest.json"
 
-  - name: Generate Android Keystore
-    run: |
-      keytool -genkeypair \
-        -alias android \
-        -keyalg RSA \
-        -keysize 2048 \
-        -validity 10000 \
-        -keystore android.keystore \
-        -storepass 123456 \
-        -keypass 123456 \
-        -dname "CN=TWAApp,O=TWA,C=VN"
+      - name: Configure Signing
+        run: |
+          cp android.keystore twa-project/android.keystore
+          cd twa-project
+          node << 'EOF'
+          const fs = require('fs');
+          const data = JSON.parse(fs.readFileSync('twa-manifest.json', 'utf8'));
+          data.signingKey = { path: "./android.keystore", alias: "android" };
+          fs.writeFileSync('twa-manifest.json', JSON.stringify(data, null, 2));
+          EOF
+          cat twa-manifest.json
 
-  - name: Init TWA Project
-    run: |
-      mkdir twa-project
-      cd twa-project
+      - name: Build APK
+        run: cd twa-project && bubblewrap build
+        env:
+          BUBBLEWRAP_KEYSTORE_PASSWORD: "123456"
+          BUBBLEWRAP_KEY_PASSWORD: "123456"
 
-      bubblewrap init \
-        --manifest="${{ env.PWA_URL }}/manifest.json"
+      - name: Locate APK
+        run: find twa-project -name "*.apk"
 
-  - name: Replace Keystore
-    run: |
-      cp android.keystore twa-project/android.keystore
+      - name: Release APK
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ env.BUILD_ID }}
+          name: Build ${{ env.BUILD_ID }}
+          files: twa-project/**/*.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  - name: Configure Signing
-    run: |
-      cd twa-project
-
-      node <<'EOF'
-      const fs = require('fs');
-
-      const data = JSON.parse(
-        fs.readFileSync('twa-manifest.json', 'utf8')
-      );
-
-      data.signingKey = {
-        path: "./android.keystore",
-        alias: "android"
-      };
-
-      fs.writeFileSync(
-        'twa-manifest.json',
-        JSON.stringify(data, null, 2)
-      );
-      EOF
-
-      cat twa-manifest.json
-
-  - name: Build APK
-    run: |
-      cd twa-project
-
-      export BUBBLEWRAP_KEYSTORE_PASSWORD=123456
-      export BUBBLEWRAP_KEY_PASSWORD=123456
-
-      bubblewrap build
-
-  - name: Locate APK
-    run: |
-      find twa-project -name "*.apk"
-
-  - name: Upload APK Artifact
-    uses: actions/upload-artifact@v4
-    with:
-      name: twa-apk
-      path: twa-project/**/*.apk
-
-  - name: Release APK
-    uses: softprops/action-gh-release@v2
-    with:
-      tag_name: build-${{ env.BUILD_ID }}
-      name: Build ${{ env.BUILD_ID }}
-      files: twa-project/**/*.apk
-    env:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-```
+      - name: Notify Worker
+        if: always()
+        run: |
+          if [ ! -z "${{ secrets.WORKER_WEBHOOK_URL }}" ]; then
+            STATUS="${{ job.status }}"
+            if [ "$STATUS" = "success" ]; then
+              curl -X POST "${{ secrets.WORKER_WEBHOOK_URL }}/webhook" \
+                -H "Content-Type: application/json" \
+                -d "{\"buildId\": \"${{ env.BUILD_ID }}\", \"status\": \"success\", \"downloadUrl\": \"https://github.com/${{ github.repository }}/releases/download/build-${{ env.BUILD_ID }}/app-release-signed.apk\"}"
+            else
+              curl -X POST "${{ secrets.WORKER_WEBHOOK_URL }}/webhook" \
+                -H "Content-Type: application/json" \
+                -d "{\"buildId\": \"${{ env.BUILD_ID }}\", \"status\": \"error\", \"message\": \"Build that bai.\"}"
+            fi
+          fi
