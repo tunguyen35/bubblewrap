@@ -70,7 +70,9 @@ jobs:
         run: |
           mkdir twa-project && cd twa-project
           cp ../android.keystore ./android.keystore
-          bubblewrap init --manifest="${{ env.PWA_URL }}/manifest.json"
+          
+          # Nhấn Enter tự động cho tất cả câu hỏi, dùng giá trị mặc định từ manifest
+          printf '\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n' | bubblewrap init --manifest="${{ env.PWA_URL }}/manifest.json"
         env:
           BUBBLEWRAP_KEYSTORE_PASSWORD: "123456"
           BUBBLEWRAP_KEY_PASSWORD: "123456"
